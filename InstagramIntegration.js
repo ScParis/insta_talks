@@ -16,6 +16,12 @@ const InstagramIntegration = () => {
     const [accessToken, setAccessToken] = useState(null);
     const [newMessage, setNewMessage] = useState('');
     const [selectedRecipient, setSelectedRecipient] = useState('');
+    const [hasAcceptedTerms, setHasAcceptedTerms] = useState(false);
+    const [showConsentDialog, setShowConsentDialog] = useState(false);
+
+    // URLs dos documentos legais
+    const privacyPolicyUrl = 'https://scparis.github.io/insta_talks/privacy-policy.html';
+    const termsOfServiceUrl = 'https://scparis.github.io/insta_talks/terms.html';
 
     useEffect(() => {
         // Inicializa o SDK do Facebook
@@ -50,130 +56,305 @@ const InstagramIntegration = () => {
 
     const handleAuthResponse = async (authResponse) => {
         try {
-            console.log('Auth Response:', authResponse); // Debug
-            const response = await api.post('/api/auth/facebook/callback', {
-                accessToken: authResponse.accessToken
+            const response = await api.post('/auth/instagram', {
+                accessToken: authResponse.accessToken,
+                userConsent: hasAcceptedTerms
             });
-            
-            console.log('Resposta do backend:', response.data);
-            setAccessToken(authResponse.accessToken);
-            setIsConnected(true);
-            fetchMessages(authResponse.accessToken);
+
+            if (response.data.success) {
+                setAccessToken(authResponse.accessToken);
+                setIsConnected(true);
+                await fetchMessages(authResponse.accessToken);
+            } else {
+                setError('Falha ao autenticar com o Instagram');
+            }
         } catch (error) {
-            console.error('Erro na autenticação:', error.response?.data || error.message);
-            setError(error.response?.data?.error || error.message);
+            console.error('Erro na autenticação:', error);
+            setError('Erro ao conectar com o servidor');
         }
     };
 
     const handleLogin = () => {
-        FB.login(function(response) {
-            if (response.authResponse) {
-                handleAuthResponse(response.authResponse);
-            } else {
-                console.log('Login cancelado ou falhou');
-                setError('Login cancelado ou falhou');
+        if (!hasAcceptedTerms) {
+            setShowConsentDialog(true);
+            return;
+        }
+
+        FB.login(
+            function(response) {
+                if (response.authResponse) {
+                    handleAuthResponse(response.authResponse);
+                } else {
+                    setError('Falha na autenticação com o Facebook');
+                }
+            },
+            {
+                scope: 'instagram_basic,instagram_manage_messages,pages_show_list,pages_messaging',
+                return_scopes: true
             }
-        }, {
-            scope: 'pages_show_list,pages_messaging,instagram_basic,pages_read_engagement'
-        });
+        );
+    };
+
+    const handleConsent = () => {
+        setHasAcceptedTerms(true);
+        setShowConsentDialog(false);
+        handleLogin();
     };
 
     const fetchMessages = async (token) => {
         try {
-            const response = await api.get('/api/instagram/messages', {
-                headers: { Authorization: token }
+            const response = await api.get('/messages', {
+                headers: { Authorization: `Bearer ${token}` }
             });
-            setMessages(response.data.data || []);
+            setMessages(response.data);
         } catch (error) {
-            console.error('Erro ao buscar mensagens:', error.response?.data || error.message);
+            console.error('Erro ao buscar mensagens:', error);
             setError('Erro ao buscar mensagens');
         }
     };
 
-    const handleSendMessage = async () => {
-        if (!newMessage || !selectedRecipient) {
-            setError('Por favor, preencha a mensagem e selecione um destinatário');
-            return;
-        }
+    const sendMessage = async () => {
+        if (!newMessage || !selectedRecipient) return;
 
         try {
-            await api.post('/api/instagram/send-message', {
-                message: newMessage,
-                recipient_id: selectedRecipient
+            await api.post('/messages/send', {
+                recipientId: selectedRecipient,
+                message: newMessage
             }, {
-                headers: { Authorization: accessToken }
+                headers: { Authorization: `Bearer ${accessToken}` }
             });
 
             setNewMessage('');
-            fetchMessages(accessToken);
+            await fetchMessages(accessToken);
         } catch (error) {
-            console.error('Erro ao enviar mensagem:', error.response?.data || error.message);
+            console.error('Erro ao enviar mensagem:', error);
             setError('Erro ao enviar mensagem');
         }
     };
 
-    return (
-        <div className="p-4">
-            <h1 className="text-2xl font-bold mb-4">Integração com Instagram</h1>
-            
-            {error && (
-                <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
-                    {error}
+    // Componente de diálogo de consentimento
+    const ConsentDialog = () => (
+        <div className="consent-dialog">
+            <div className="consent-content">
+                <h2>Termos de Uso e Privacidade</h2>
+                <p>Para usar o InstaTalks, você precisa aceitar nossos termos de uso e política de privacidade.</p>
+                <p>Por favor, leia os seguintes documentos:</p>
+                <div className="consent-links">
+                    <a href={privacyPolicyUrl} target="_blank" rel="noopener noreferrer">Política de Privacidade</a>
+                    <a href={termsOfServiceUrl} target="_blank" rel="noopener noreferrer">Termos de Serviço</a>
                 </div>
-            )}
+                <div className="consent-actions">
+                    <button onClick={handleConsent} className="accept-button">
+                        Aceitar e Continuar
+                    </button>
+                    <button onClick={() => setShowConsentDialog(false)} className="decline-button">
+                        Recusar
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+
+    return (
+        <div className="instagram-integration">
+            <h1>InstaTalks</h1>
+            
+            {error && <div className="error-message">{error}</div>}
             
             {!isConnected ? (
-                <button
-                    onClick={handleLogin}
-                    className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded"
-                >
-                    Conectar com Facebook/Instagram
-                </button>
-            ) : (
-                <div className="space-y-4">
-                    <div className="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded">
-                        Conectado ao Instagram!
+                <div className="login-section">
+                    <button onClick={handleLogin} className="login-button">
+                        Conectar com Instagram
+                    </button>
+                    <div className="legal-links">
+                        <a href={privacyPolicyUrl} target="_blank" rel="noopener noreferrer">
+                            Política de Privacidade
+                        </a>
+                        <span className="separator">|</span>
+                        <a href={termsOfServiceUrl} target="_blank" rel="noopener noreferrer">
+                            Termos de Serviço
+                        </a>
                     </div>
-
-                    <div className="border rounded p-4">
-                        <h2 className="text-xl mb-4">Mensagens</h2>
-                        <div className="space-y-2">
-                            {messages.map((msg, index) => (
-                                <div key={index} className="border-b py-2">
-                                    <p><strong>De:</strong> {msg.from?.name}</p>
-                                    <p>{msg.message}</p>
-                                    <p className="text-sm text-gray-500">
-                                        {new Date(msg.created_time).toLocaleString()}
-                                    </p>
-                                </div>
-                            ))}
-                        </div>
-
-                        <div className="mt-4 space-y-2">
-                            <input
-                                type="text"
-                                value={newMessage}
-                                onChange={(e) => setNewMessage(e.target.value)}
-                                placeholder="Digite sua mensagem"
-                                className="w-full border p-2 rounded"
-                            />
-                            <input
-                                type="text"
-                                value={selectedRecipient}
-                                onChange={(e) => setSelectedRecipient(e.target.value)}
-                                placeholder="ID do destinatário"
-                                className="w-full border p-2 rounded"
-                            />
-                            <button
-                                onClick={handleSendMessage}
-                                className="bg-green-500 hover:bg-green-700 text-white font-bold py-2 px-4 rounded"
-                            >
-                                Enviar
-                            </button>
-                        </div>
+                </div>
+            ) : (
+                <div className="messages-section">
+                    <div className="messages-list">
+                        {messages.map((msg, index) => (
+                            <div key={index} className="message">
+                                <strong>{msg.from}:</strong> {msg.text}
+                            </div>
+                        ))}
+                    </div>
+                    <div className="message-input">
+                        <select
+                            value={selectedRecipient}
+                            onChange={(e) => setSelectedRecipient(e.target.value)}
+                        >
+                            <option value="">Selecione um destinatário</option>
+                            {/* Adicione opções de destinatários aqui */}
+                        </select>
+                        <input
+                            type="text"
+                            value={newMessage}
+                            onChange={(e) => setNewMessage(e.target.value)}
+                            placeholder="Digite sua mensagem..."
+                        />
+                        <button onClick={sendMessage}>Enviar</button>
                     </div>
                 </div>
             )}
+
+            {showConsentDialog && <ConsentDialog />}
+
+            <style jsx>{`
+                .instagram-integration {
+                    max-width: 800px;
+                    margin: 0 auto;
+                    padding: 20px;
+                }
+
+                .error-message {
+                    color: #ff4444;
+                    margin: 10px 0;
+                    padding: 10px;
+                    background-color: #ffe5e5;
+                    border-radius: 4px;
+                }
+
+                .login-section {
+                    text-align: center;
+                    margin: 40px 0;
+                }
+
+                .login-button {
+                    background-color: #0095f6;
+                    color: white;
+                    border: none;
+                    padding: 12px 24px;
+                    border-radius: 4px;
+                    cursor: pointer;
+                    font-size: 16px;
+                }
+
+                .legal-links {
+                    margin-top: 20px;
+                }
+
+                .legal-links a {
+                    color: #666;
+                    text-decoration: none;
+                    margin: 0 10px;
+                }
+
+                .separator {
+                    color: #666;
+                }
+
+                .messages-section {
+                    margin-top: 20px;
+                }
+
+                .messages-list {
+                    border: 1px solid #ddd;
+                    border-radius: 4px;
+                    padding: 10px;
+                    height: 400px;
+                    overflow-y: auto;
+                }
+
+                .message {
+                    margin: 10px 0;
+                    padding: 10px;
+                    background-color: #f5f5f5;
+                    border-radius: 4px;
+                }
+
+                .message-input {
+                    margin-top: 20px;
+                    display: flex;
+                    gap: 10px;
+                }
+
+                .message-input input {
+                    flex: 1;
+                    padding: 8px;
+                    border: 1px solid #ddd;
+                    border-radius: 4px;
+                }
+
+                .message-input select {
+                    padding: 8px;
+                    border: 1px solid #ddd;
+                    border-radius: 4px;
+                }
+
+                .message-input button {
+                    background-color: #0095f6;
+                    color: white;
+                    border: none;
+                    padding: 8px 16px;
+                    border-radius: 4px;
+                    cursor: pointer;
+                }
+
+                .consent-dialog {
+                    position: fixed;
+                    top: 0;
+                    left: 0;
+                    right: 0;
+                    bottom: 0;
+                    background-color: rgba(0, 0, 0, 0.5);
+                    display: flex;
+                    justify-content: center;
+                    align-items: center;
+                    z-index: 1000;
+                }
+
+                .consent-content {
+                    background-color: white;
+                    padding: 30px;
+                    border-radius: 8px;
+                    max-width: 500px;
+                    width: 90%;
+                }
+
+                .consent-links {
+                    margin: 20px 0;
+                    display: flex;
+                    gap: 20px;
+                    justify-content: center;
+                }
+
+                .consent-links a {
+                    color: #0095f6;
+                    text-decoration: none;
+                }
+
+                .consent-actions {
+                    display: flex;
+                    gap: 10px;
+                    justify-content: center;
+                    margin-top: 20px;
+                }
+
+                .accept-button {
+                    background-color: #0095f6;
+                    color: white;
+                    border: none;
+                    padding: 10px 20px;
+                    border-radius: 4px;
+                    cursor: pointer;
+                }
+
+                .decline-button {
+                    background-color: #666;
+                    color: white;
+                    border: none;
+                    padding: 10px 20px;
+                    border-radius: 4px;
+                    cursor: pointer;
+                }
+            `}</style>
         </div>
     );
 };

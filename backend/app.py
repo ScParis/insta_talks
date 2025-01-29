@@ -2,12 +2,24 @@
 from flask import Flask, request, jsonify, redirect, url_for
 from flask_cors import CORS
 import requests
-from config import Config
-import urllib.parse
 import json
+from datetime import datetime
+import logging
+from config import Config
 
 app = Flask(__name__)
 CORS(app)
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('app.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 @app.route('/', methods=['GET'])
 def home():
@@ -15,14 +27,21 @@ def home():
 
 @app.route('/api/auth/facebook/callback', methods=['POST'])
 def facebook_callback():
-    data = request.json
-    access_token = data.get('accessToken')
-    
-    if not access_token:
-        return jsonify({'error': 'Token não fornecido'}), 400
-
     try:
-        # Verifica o token com o Facebook
+        data = request.json
+        access_token = data.get('accessToken')
+        user_consent = data.get('userConsent')
+
+        if not access_token:
+            return jsonify({'error': 'Token de acesso não fornecido'}), 400
+
+        if not user_consent:
+            return jsonify({'error': 'Consentimento do usuário necessário'}), 403
+
+        # Log the consent
+        logger.info(f'User consent received at {datetime.now().isoformat()}')
+
+        # Validate token with Instagram
         debug_token_url = f'https://graph.facebook.com/v18.0/debug_token'
         app_access_token = f"{Config.INSTAGRAM_CLIENT_ID}|{Config.INSTAGRAM_CLIENT_SECRET}"
         
@@ -68,55 +87,68 @@ def facebook_callback():
             return jsonify({'error': 'Token inválido'}), 400
             
     except Exception as e:
-        print("Erro:", str(e))
+        logger.error(f'Authentication error: {str(e)}')
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/instagram/messages', methods=['GET'])
 def get_messages():
-    access_token = request.headers.get('Authorization')
-    if not access_token:
-        return jsonify({'error': 'Token não fornecido'}), 401
-
     try:
-        # Obtém as mensagens do Instagram
+        token = request.headers.get('Authorization')
+        if not token:
+            return jsonify({'error': 'Token não fornecido'}), 401
+
+        token = token.replace('Bearer ', '')
+
+        # Fetch messages from Instagram API
         messages_url = f'https://graph.facebook.com/v18.0/{Config.INSTAGRAM_BUSINESS_ACCOUNT_ID}/conversations'
         response = requests.get(messages_url, params={
-            'access_token': access_token,
+            'access_token': token,
             'fields': 'participants,messages{message,from,to,created_time}'
         })
         
-        messages = response.json()
-        return jsonify(messages), 200
+        if response.status_code != 200:
+            logger.error(f'Instagram API error: {response.text}')
+            return jsonify({'error': 'Erro ao buscar mensagens'}), response.status_code
+
+        return jsonify(response.json())
 
     except Exception as e:
-        print("Erro ao obter mensagens:", str(e))
+        logger.error(f'Error fetching messages: {str(e)}')
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/instagram/send-message', methods=['POST'])
 def send_instagram_message():
-    data = request.json
-    if not data or 'message' not in data or 'recipient_id' not in data:
-        return jsonify({'error': 'Dados incompletos'}), 400
-
-    access_token = request.headers.get('Authorization')
-    if not access_token:
-        return jsonify({'error': 'Token não fornecido'}), 401
-
     try:
-        # Envia a mensagem
+        token = request.headers.get('Authorization')
+        if not token:
+            return jsonify({'error': 'Token não fornecido'}), 401
+
+        token = token.replace('Bearer ', '')
+        data = request.get_json()
+
+        recipient_id = data.get('recipient_id')
+        message = data.get('message')
+
+        if not recipient_id or not message:
+            return jsonify({'error': 'Destinatário e mensagem são obrigatórios'}), 400
+
+        # Send message through Instagram API
         send_url = f'https://graph.facebook.com/v18.0/{Config.INSTAGRAM_BUSINESS_ACCOUNT_ID}/messages'
         response = requests.post(send_url, params={
-            'access_token': access_token,
-            'recipient': {'id': data['recipient_id']},
-            'message': {'text': data['message']}
+            'access_token': token,
+            'recipient': {'id': recipient_id},
+            'message': {'text': message}
         })
         
-        result = response.json()
-        return jsonify(result), 200
+        if response.status_code != 200:
+            logger.error(f'Instagram API error: {response.text}')
+            return jsonify({'error': 'Erro ao enviar mensagem'}), response.status_code
+
+        return jsonify({'success': True})
 
     except Exception as e:
-        print("Erro ao enviar mensagem:", str(e))
+        logger.error(f'Error sending message: {str(e)}')
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    app.run(debug=Config.DEBUG, host='0.0.0.0', port=5000)
