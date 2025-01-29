@@ -1,0 +1,7 @@
+<<<<<<< HEAD
+node_modules
+node_modules
+=======
+# Google App Engine generated folder
+appengine-generated/
+>>>>>>> 826851f7f5d22248fc224a50da1f71d5dead408f
